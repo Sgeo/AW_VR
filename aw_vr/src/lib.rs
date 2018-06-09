@@ -2,6 +2,7 @@
 
 extern crate easyhook;
 extern crate libloading as lib;
+extern crate ovr_sys as vr;
 
 #[macro_use]
 extern crate lazy_static;
@@ -11,6 +12,26 @@ use std::os::raw::{c_ulong, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use easyhook::{lh_install_hook};
 use easyhook::error_string;
+use std::sync::Mutex;
+use std::mem;
+
+#[derive(Debug)]
+struct Session(vr::ovrSession);
+
+unsafe impl Sync for Session {}
+
+impl std::ops::Deref for Session {
+    type Target = vr::ovrSession;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Session {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 lazy_static! {
     static ref GL: lib::Library = lib::Library::new("OPENGL32").unwrap();
@@ -21,11 +42,34 @@ lazy_static! {
     static ref rw_camera_set_view_window: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_set_view_window\0") }.unwrap();
 }
 
+lazy_static! {
+    static ref VRSession: Session = {
+        unsafe {
+            let init = vr::ovrInitParams {
+                Flags: 0,
+                RequestedMinorVersion: vr::OVR_MINOR_VERSION,
+                LogCallback: None,
+                UserData: 0,
+                ConnectionTimeoutMS: 0,
+                .. mem::uninitialized()
+            };
+            let result = vr::ovr_Initialize(&init as *const _);
+            let mut session: vr::ovrSession = mem::uninitialized();
+            let mut luid: vr::ovrGraphicsLuid = mem::uninitialized();
+            let result = vr::ovr_Create(&mut session as *mut _, &mut luid as *mut _);
+            Session(session)
+        }
+    };
+}
+
 #[export_name="_NativeInjectionEntryPoint_4"] // EasyHook32.dll has been hex edited to look for this
 pub extern "stdcall" fn NativeInjectionEntryPoint(_remote_info: *mut c_void) {
     unsafe {
         use std::fs::File;
+        use std::mem;
         File::create("about_to_install_hook.txt").unwrap();
+
+        lazy_static::initialize(&VRSession);
         lh_install_hook(**glViewport as *mut _, glViewportHook as *mut _);
         lh_install_hook(**rw_camera_begin_update as *mut _, rw_camera_begin_update_hook as *mut _);
         lh_install_hook(**rw_camera_set_view_window as *mut _, rw_camera_set_view_window_hook as *mut _);
@@ -34,6 +78,7 @@ pub extern "stdcall" fn NativeInjectionEntryPoint(_remote_info: *mut c_void) {
         let mut errors = File::create("hook_errors.txt").unwrap();
         writeln!(&mut errors, "Error: {:?}", error);
         drop(errors);
+        
     }
 }
 
@@ -70,7 +115,9 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
 pub extern "C" fn rw_camera_set_view_window_hook(camera: *mut c_void, view_window: *mut f32) -> *mut c_void {
     if !view_window.is_null() {
         unsafe {
-            *view_window /= 2.0;
+            //*view_window /= 2.0;
+            *view_window = 1.0;
+            *view_window.offset(1) = 1.0;
         }
     }
     unsafe {

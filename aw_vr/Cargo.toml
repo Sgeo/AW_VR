@@ -6,6 +6,7 @@ authors = ["Sgeo <sgeoster@gmail.com>"]
 [dependencies]
 libloading = "0.5"
 lazy_static = "1.0.0"
+ovr-sys = { version = "0.3.0", features = ["opengl"] }
 
 [dependencies.easyhook]
 path = "../easyhook"
