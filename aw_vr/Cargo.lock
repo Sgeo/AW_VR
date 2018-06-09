@@ -1,5 +1,5 @@
 [[package]]
-name = "aw_sbs"
+name = "aw_vr"
 version = "0.1.0"
 dependencies = [
  "easyhook 0.1.0",
