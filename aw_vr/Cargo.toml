@@ -6,6 +6,7 @@ authors = ["Sgeo <sgeoster@gmail.com>"]
 [dependencies]
 libloading = "0.5"
 lazy_static = "1.0.0"
+openvr = "0.5.2"
 
 [dependencies.easyhook]
 path = "../easyhook"
