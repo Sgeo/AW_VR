@@ -33,11 +33,31 @@ impl std::ops::DerefMut for Session {
     }
 }
 
+#[derive(Debug)]
+struct TextureSwapChain(vr::ovrTextureSwapChain);
+
+unsafe impl Sync for TextureSwapChain {}
+
+impl std::ops::Deref for TextureSwapChain {
+    type Target = vr::ovrTextureSwapChain;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for TextureSwapChain {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 lazy_static! {
     static ref GL: lib::Library = lib::Library::new("OPENGL32").unwrap();
     static ref RW: lib::Library = lib::Library::new("rw_opengl").unwrap();
     static ref glViewport: lib::Symbol<'static, extern "system" fn(i32, i32, u32, u32)> = unsafe { GL.get(b"glViewport\0") }.unwrap();
+    static ref glGetIntegerv: lib::Symbol<'static, extern "system" fn(i32, *mut i32)> = unsafe { GL.get(b"glGetIntegerv\0") }.unwrap();
     static ref rw_camera_begin_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_begin_update\0") }.unwrap();
+    static ref rw_camera_end_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_end_update\0") }.unwrap();
     static ref rw_frame_translate: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32, u32) -> *mut c_void> = unsafe { RW.get(b"rw_frame_translate\0") }.unwrap();
     static ref rw_camera_set_view_window: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_set_view_window\0") }.unwrap();
 }
@@ -60,6 +80,25 @@ lazy_static! {
             Session(session)
         }
     };
+    static ref VRTextureSwapChain: TextureSwapChain = {
+        let desc = vr::ovrTextureSwapChainDesc {
+            Type: vr::ovrTexture_2D,
+            Format: vr::OVR_FORMAT_R8G8B8A8_UNORM, // WILD GUESSING!
+            ArraySize: 1,
+            Width: 200,
+            Height: 200,
+            MipLevels: 1,
+            SampleCount: 1,
+            StaticImage: 0,
+            MiscFlags: 0,
+            BindFlags: 0
+        };
+        unsafe {
+            let mut tsc = mem::uninitialized();
+            vr::opengl::ovr_CreateTextureSwapChainGL(**VRSession, &desc, &mut tsc);
+            TextureSwapChain(tsc)
+        }
+    };
 }
 
 #[export_name="_NativeInjectionEntryPoint_4"] // EasyHook32.dll has been hex edited to look for this
@@ -70,8 +109,10 @@ pub extern "stdcall" fn NativeInjectionEntryPoint(_remote_info: *mut c_void) {
         File::create("about_to_install_hook.txt").unwrap();
 
         lazy_static::initialize(&VRSession);
+        
         lh_install_hook(**glViewport as *mut _, glViewportHook as *mut _);
         lh_install_hook(**rw_camera_begin_update as *mut _, rw_camera_begin_update_hook as *mut _);
+        lh_install_hook(**rw_camera_end_update as *mut _, rw_camera_end_update_hook as *mut _);
         lh_install_hook(**rw_camera_set_view_window as *mut _, rw_camera_set_view_window_hook as *mut _);
         let error = error_string();
         File::create("installed_hook.txt").unwrap();
@@ -104,12 +145,27 @@ fn camera_get_frame(camera: *mut c_void) -> *mut c_void {
 }
 
 pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_void {
+    lazy_static::initialize(&VRTextureSwapChain);
     let current = counter.load(Ordering::SeqCst);
     if current&2 != 0 {
         let frame = camera_get_frame(camera);
         rw_frame_translate(frame, (&mut [-0.006, 0.0, 0.0]).as_mut_ptr(), 1);
     }
     rw_camera_begin_update(camera)
+}
+
+pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void {
+    let result = rw_camera_end_update(camera);
+    let mut texid = 0;
+    unsafe {
+        glGetIntegerv(0x8069, &mut texid);
+    }
+    if texid != 0 {
+        unsafe {
+            //let layer = 
+        }
+    }
+    result
 }
 
 pub extern "C" fn rw_camera_set_view_window_hook(camera: *mut c_void, view_window: *mut f32) -> *mut c_void {
