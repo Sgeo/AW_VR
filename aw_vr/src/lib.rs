@@ -165,6 +165,10 @@ pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void 
             //let layer = 
         }
     }
+    unsafe {
+        vr::ovr_CommitTextureSwapChain(**VRSession, **VRTextureSwapChain);
+        vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), std::ptr::null(), 0);
+    }
     result
 }
 
