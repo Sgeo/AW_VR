@@ -57,6 +57,11 @@ lazy_static! {
     static ref glViewport: lib::Symbol<'static, extern "system" fn(i32, i32, u32, u32)> = unsafe { GL.get(b"glViewport\0") }.unwrap();
     static ref glGetIntegerv: lib::Symbol<'static, extern "system" fn(i32, *mut i32)> = unsafe { GL.get(b"glGetIntegerv\0") }.unwrap();
     static ref glBindTexture: lib::Symbol<'static, extern "system" fn(i32, u32)> = unsafe { GL.get(b"glBindTexture\0") }.unwrap();
+    static ref glReadBuffer: lib::Symbol<'static, extern "system" fn(i32)> = unsafe { GL.get(b"glReadBuffer\0") }.unwrap();
+    static ref glCopyPixels: lib::Symbol<'static, extern "system" fn(i32, i32, u32, u32, i32)> = unsafe { GL.get(b"glCopyPixels\0") }.unwrap();
+    static ref glCopyTexImage2D: lib::Symbol<'static, extern "system" fn(i32, i32, i32, i32, i32, u32, u32, i32)> = unsafe { GL.get(b"glCopyTexImage2D\0") }.unwrap();
+    static ref glEnable: lib::Symbol<'static, extern "system" fn(i32)> = unsafe { GL.get(b"glEnable\0") }.unwrap();
+    static ref glGetError: lib::Symbol<'static, extern "system" fn() -> i32> = unsafe { GL.get(b"glGetError\0") }.unwrap();
     static ref rw_camera_begin_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_begin_update\0") }.unwrap();
     static ref rw_camera_end_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_end_update\0") }.unwrap();
     static ref rw_frame_translate: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32, u32) -> *mut c_void> = unsafe { RW.get(b"rw_frame_translate\0") }.unwrap();
@@ -153,11 +158,6 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
         rw_frame_translate(frame, (&mut [-0.006, 0.0, 0.0]).as_mut_ptr(), 1);
     }
     let result = rw_camera_begin_update(camera);
-    unsafe {
-        let mut texid = 0;
-        vr::opengl::ovr_GetTextureSwapChainBufferGL(**VRSession, **VRTextureSwapChain, -1, &mut texid);
-        glBindTexture(0x0DE1, texid);
-    }
     result
 }
 
@@ -202,7 +202,7 @@ fn layer() -> vr::ovrLayerEyeFov {
         vr::ovrLayerEyeFov {
             Header: vr::ovrLayerHeader {
                 Type: vr::ovrLayerType_EyeFov,
-                Flags: 0,
+                Flags: vr::ovrLayerFlag_TextureOriginAtBottomLeft as u32,
                 .. mem::uninitialized()
             },
             ColorTexture: [**VRTextureSwapChain, std::ptr::null_mut()],
@@ -215,23 +215,39 @@ fn layer() -> vr::ovrLayerEyeFov {
     }
 }
 
+fn check_error<S: AsRef<str>>(where_: S) {
+    let error = glGetError();
+    if error != 0 {
+        use std::fs::File;
+        
+        let mut file = File::create("vrerror.txt").unwrap();
+        write!(&mut file, "GL Error! Error code: 0x{:X} after doing: {}", error, where_.as_ref()).unwrap();
+        panic!("GL ERROR");
+    }
+}
+
 pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void {
     let result = rw_camera_end_update(camera);
-    let mut texid = 0;
     unsafe {
-        glGetIntegerv(0x8069, &mut texid);
-    }
-    if texid != 0 {
-        unsafe {
-            //let layer = 
+        let mut texid = 0;
+        vr::opengl::ovr_GetTextureSwapChainBufferGL(**VRSession, **VRTextureSwapChain, -1, &mut texid);
+        if texid == 0 {
+            panic!("0 texid");
         }
-    }
-    unsafe {
+        glEnable(0x0DE1);
+        check_error("Enabling GL_TEXTURE_2D");
+        glReadBuffer(0x0404);
+        check_error("glReadBuffer");
+        glBindTexture(0x0DE1, texid);
+        check_error("glBindTexture");
+        glCopyTexImage2D(0x0DE1, 0, 0x1907, 0, 0, 128, 128, 0);
+        check_error("glCopyTexImage2D");
         vr::ovr_CommitTextureSwapChain(**VRSession, **VRTextureSwapChain);
         let layer = layer();
         let layers = [&layer as *const _ as *const vr::ovrLayerHeader];
         vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), (&layers).as_ptr(), 1);
     }
+    
     result
 }
 
