@@ -56,6 +56,7 @@ lazy_static! {
     static ref RW: lib::Library = lib::Library::new("rw_opengl").unwrap();
     static ref glViewport: lib::Symbol<'static, extern "system" fn(i32, i32, u32, u32)> = unsafe { GL.get(b"glViewport\0") }.unwrap();
     static ref glGetIntegerv: lib::Symbol<'static, extern "system" fn(i32, *mut i32)> = unsafe { GL.get(b"glGetIntegerv\0") }.unwrap();
+    static ref glBindTexture: lib::Symbol<'static, extern "system" fn(i32, u32)> = unsafe { GL.get(b"glBindTexture\0") }.unwrap();
     static ref rw_camera_begin_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_begin_update\0") }.unwrap();
     static ref rw_camera_end_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_end_update\0") }.unwrap();
     static ref rw_frame_translate: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32, u32) -> *mut c_void> = unsafe { RW.get(b"rw_frame_translate\0") }.unwrap();
@@ -110,7 +111,7 @@ pub extern "stdcall" fn NativeInjectionEntryPoint(_remote_info: *mut c_void) {
 
         lazy_static::initialize(&VRSession);
         
-        lh_install_hook(**glViewport as *mut _, glViewportHook as *mut _);
+        //lh_install_hook(**glViewport as *mut _, glViewportHook as *mut _);
         lh_install_hook(**rw_camera_begin_update as *mut _, rw_camera_begin_update_hook as *mut _);
         lh_install_hook(**rw_camera_end_update as *mut _, rw_camera_end_update_hook as *mut _);
         lh_install_hook(**rw_camera_set_view_window as *mut _, rw_camera_set_view_window_hook as *mut _);
@@ -151,7 +152,67 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
         let frame = camera_get_frame(camera);
         rw_frame_translate(frame, (&mut [-0.006, 0.0, 0.0]).as_mut_ptr(), 1);
     }
-    rw_camera_begin_update(camera)
+    let result = rw_camera_begin_update(camera);
+    unsafe {
+        let mut texid = 0;
+        vr::opengl::ovr_GetTextureSwapChainBufferGL(**VRSession, **VRTextureSwapChain, -1, &mut texid);
+        glBindTexture(0x0DE1, texid);
+    }
+    result
+}
+
+fn layer() -> vr::ovrLayerEyeFov {
+    unsafe { 
+        let viewport = vr::ovrRecti {
+            Pos: vr::ovrVector2i {
+                x: 0,
+                y: 0,
+                .. mem::uninitialized()
+            },
+            Size: vr::ovrSizei {
+                w: 200,
+                h: 200,
+                .. mem::uninitialized()
+            },
+            .. mem::uninitialized()
+        };
+        let fov = vr::ovrFovPort {
+            UpTan: 1.0,
+            DownTan: 1.0,
+            LeftTan: 1.0,
+            RightTan: 1.0,
+            .. mem::uninitialized()
+        };
+        let pose = vr::ovrPosef {
+            Position: vr::ovrVector3f {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                .. mem::uninitialized()
+            },
+            Orientation: vr::ovrQuatf {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 1.0,
+                .. mem::uninitialized()
+            },
+            .. mem::uninitialized()
+        };
+        vr::ovrLayerEyeFov {
+            Header: vr::ovrLayerHeader {
+                Type: vr::ovrLayerType_EyeFov,
+                Flags: 0,
+                .. mem::uninitialized()
+            },
+            ColorTexture: [**VRTextureSwapChain, std::ptr::null_mut()],
+            Viewport: [viewport, viewport],
+            Fov: [fov, fov],
+            RenderPose: [pose, pose],
+            SensorSampleTime: 0.0,
+            .. mem::uninitialized()
+        }
+    }
 }
 
 pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void {
@@ -167,7 +228,9 @@ pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void 
     }
     unsafe {
         vr::ovr_CommitTextureSwapChain(**VRSession, **VRTextureSwapChain);
-        vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), std::ptr::null(), 0);
+        let layer = layer();
+        let layers = [&layer as *const _ as *const vr::ovrLayerHeader];
+        vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), (&layers).as_ptr(), 1);
     }
     result
 }
