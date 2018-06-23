@@ -90,10 +90,10 @@ lazy_static! {
     static ref VRTextureSwapChain: TextureSwapChain = {
         let desc = vr::ovrTextureSwapChainDesc {
             Type: vr::ovrTexture_2D,
-            Format: vr::OVR_FORMAT_R8G8B8A8_UNORM, // WILD GUESSING!
+            Format: vr::OVR_FORMAT_R8G8B8A8_UNORM_SRGB, // WILD GUESSING!
             ArraySize: 1,
-            Width: 200,
-            Height: 200,
+            Width: 512,
+            Height: 512,
             MipLevels: 1,
             SampleCount: 1,
             StaticImage: 0,
@@ -171,8 +171,8 @@ fn layer() -> vr::ovrLayerEyeFov {
                 .. mem::uninitialized()
             },
             Size: vr::ovrSizei {
-                w: 200,
-                h: 200,
+                w: 512,
+                h: 512,
                 .. mem::uninitialized()
             },
             .. mem::uninitialized()
@@ -242,7 +242,7 @@ pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void 
         glBindTexture(0x0DE1, texid);
         check_error("glBindTexture");
         //glCopyTexImage2D(0x0DE1, 0, 0x1907, 0, 0, 128, 128, 0);
-        glCopyTexSubImage2D(0x0DE1, 0, 0, 0, 0, 0, 200, 200);
+        glCopyTexSubImage2D(0x0DE1, 0, 0, 0, 0, 0, 512, 512);
         check_error("glCopyTexSubImage2D");
         vr::ovr_CommitTextureSwapChain(**VRSession, **VRTextureSwapChain);
         let layer = layer();
