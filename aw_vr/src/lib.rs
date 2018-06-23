@@ -99,6 +99,28 @@ lazy_static! {
     };
     static ref VRTextureSwapChains: Mutex<Option<[TextureSwapChain; 2]>> = Mutex::new(None);
     static ref ViewportSize: Mutex<Option<(u32, u32)>> = Mutex::new(None);
+    static ref VRPoses: Mutex<[vr::ovrPosef; 2]> = Mutex::new([zero_posef(), zero_posef()]);
+}
+
+fn zero_posef() -> vr::ovrPosef {
+    unsafe {
+        vr::ovrPosef {
+            Position: vr::ovrVector3f {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                .. mem::uninitialized()
+            },
+            Orientation: vr::ovrQuatf {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 1.0,
+                .. mem::uninitialized()
+            },
+            .. mem::uninitialized()
+        }
+    }
 }
 
 fn texture_swap_chain(width: i32, height: i32) -> TextureSwapChain {
@@ -161,6 +183,22 @@ fn camera_get_frame(camera: *mut c_void) -> *mut c_void {
 
 pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_void {
     let current = counter.load(Ordering::SeqCst);
+    if current&1 == 0 {
+        unsafe {
+            let fov = vr::ovrFovPort {
+                UpTan: 1.0,
+                DownTan: 1.0,
+                LeftTan: 1.0,
+                RightTan: 1.0,
+                .. mem::uninitialized()
+            };
+            let left_eye_hmd_offset = vr::ovr_GetRenderDesc(**VRSession, vr::ovrEye_Left, fov).HmdToEyeOffset;
+            let right_eye_hmd_offset = vr::ovr_GetRenderDesc(**VRSession, vr::ovrEye_Right, fov).HmdToEyeOffset;
+            let mut poses = [zero_posef(), zero_posef()];
+            vr::ovr_GetEyePoses(**VRSession, 0, 1, &[left_eye_hmd_offset, right_eye_hmd_offset], (&mut poses).as_mut_ptr() as *const _, std::ptr::null_mut());
+            *VRPoses.lock().unwrap() = poses;
+        }
+    }
     if current&1 != 0 {
         let frame = camera_get_frame(camera);
         rw_frame_translate(frame, (&mut [-0.006, 0.0, 0.0]).as_mut_ptr(), 1);
@@ -169,7 +207,7 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
     result
 }
 
-fn layer(tsc: &[TextureSwapChain], viewport_size: (u32, u32)) -> vr::ovrLayerEyeFov {
+fn layer(tsc: &[TextureSwapChain], viewport_size: (u32, u32), poses: &[vr::ovrPosef]) -> vr::ovrLayerEyeFov {
     let (width, height) = viewport_size;
     unsafe { 
         let viewport = vr::ovrRecti {
@@ -192,22 +230,6 @@ fn layer(tsc: &[TextureSwapChain], viewport_size: (u32, u32)) -> vr::ovrLayerEye
             RightTan: 1.0,
             .. mem::uninitialized()
         };
-        let pose = vr::ovrPosef {
-            Position: vr::ovrVector3f {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-                .. mem::uninitialized()
-            },
-            Orientation: vr::ovrQuatf {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-                w: 1.0,
-                .. mem::uninitialized()
-            },
-            .. mem::uninitialized()
-        };
         vr::ovrLayerEyeFov {
             Header: vr::ovrLayerHeader {
                 Type: vr::ovrLayerType_EyeFov,
@@ -217,7 +239,7 @@ fn layer(tsc: &[TextureSwapChain], viewport_size: (u32, u32)) -> vr::ovrLayerEye
             ColorTexture: [*tsc[0], *tsc[1]],
             Viewport: [viewport, viewport],
             Fov: [fov, fov],
-            RenderPose: [pose, pose],
+            RenderPose: [poses[0], poses[1]],
             SensorSampleTime: 0.0,
             .. mem::uninitialized()
         }
@@ -266,9 +288,12 @@ pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void 
         glCopyTexSubImage2D(0x0DE1, 0, 0, 0, 0, 0, width, height);
         check_error("glCopyTexSubImage2D");
         vr::ovr_CommitTextureSwapChain(**VRSession, *tsc[eye]);
-        let layer = layer(&*tsc, (width, height));
-        let layers = [&layer as *const _ as *const vr::ovrLayerHeader];
-        vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), (&layers).as_ptr(), 1);
+        if eye == 1 {
+            let poses = VRPoses.lock().unwrap();
+            let layer = layer(&*tsc, (width, height), &*poses);
+            let layers = [&layer as *const _ as *const vr::ovrLayerHeader];
+            vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), (&layers).as_ptr(), 1);
+        }
     }
     counter.store(current.wrapping_add(1), Ordering::SeqCst);
     result
