@@ -87,25 +87,27 @@ lazy_static! {
             Session(session)
         }
     };
-    static ref VRTextureSwapChain: TextureSwapChain = {
-        let desc = vr::ovrTextureSwapChainDesc {
-            Type: vr::ovrTexture_2D,
-            Format: vr::OVR_FORMAT_R8G8B8A8_UNORM_SRGB, // WILD GUESSING!
-            ArraySize: 1,
-            Width: 512,
-            Height: 512,
-            MipLevels: 1,
-            SampleCount: 1,
-            StaticImage: 0,
-            MiscFlags: 0,
-            BindFlags: 0
-        };
-        unsafe {
-            let mut tsc = mem::uninitialized();
-            vr::opengl::ovr_CreateTextureSwapChainGL(**VRSession, &desc, &mut tsc);
-            TextureSwapChain(tsc)
-        }
+    static ref VRTextureSwapChains: [TextureSwapChain; 2] = [texture_swap_chain(), texture_swap_chain()];
+}
+
+fn texture_swap_chain() -> TextureSwapChain {
+    let desc = vr::ovrTextureSwapChainDesc {
+        Type: vr::ovrTexture_2D,
+        Format: vr::OVR_FORMAT_R8G8B8A8_UNORM_SRGB, // WILD GUESSING!
+        ArraySize: 1,
+        Width: 512,
+        Height: 512,
+        MipLevels: 1,
+        SampleCount: 1,
+        StaticImage: 0,
+        MiscFlags: 0,
+        BindFlags: 0
     };
+    unsafe {
+        let mut tsc = mem::uninitialized();
+        vr::opengl::ovr_CreateTextureSwapChainGL(**VRSession, &desc, &mut tsc);
+        TextureSwapChain(tsc)
+    }
 }
 
 #[export_name="_NativeInjectionEntryPoint_4"] // EasyHook32.dll has been hex edited to look for this
@@ -152,9 +154,9 @@ fn camera_get_frame(camera: *mut c_void) -> *mut c_void {
 }
 
 pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_void {
-    lazy_static::initialize(&VRTextureSwapChain);
+    lazy_static::initialize(&VRTextureSwapChains);
     let current = counter.load(Ordering::SeqCst);
-    if current&2 != 0 {
+    if current&1 != 0 {
         let frame = camera_get_frame(camera);
         rw_frame_translate(frame, (&mut [-0.006, 0.0, 0.0]).as_mut_ptr(), 1);
     }
@@ -206,7 +208,7 @@ fn layer() -> vr::ovrLayerEyeFov {
                 Flags: vr::ovrLayerFlag_TextureOriginAtBottomLeft as u32,
                 .. mem::uninitialized()
             },
-            ColorTexture: [**VRTextureSwapChain, std::ptr::null_mut()],
+            ColorTexture: [*VRTextureSwapChains[0], *VRTextureSwapChains[1]],
             Viewport: [viewport, viewport],
             Fov: [fov, fov],
             RenderPose: [pose, pose],
@@ -229,9 +231,11 @@ fn check_error<S: AsRef<str>>(where_: S) {
 
 pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void {
     let result = rw_camera_end_update(camera);
+    let current = counter.load(Ordering::SeqCst);
+    let eye: usize = current&1;
     unsafe {
         let mut texid = 0;
-        vr::opengl::ovr_GetTextureSwapChainBufferGL(**VRSession, **VRTextureSwapChain, -1, &mut texid);
+        vr::opengl::ovr_GetTextureSwapChainBufferGL(**VRSession, *VRTextureSwapChains[eye], -1, &mut texid);
         if texid == 0 {
             panic!("0 texid");
         }
@@ -244,12 +248,14 @@ pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void 
         //glCopyTexImage2D(0x0DE1, 0, 0x1907, 0, 0, 128, 128, 0);
         glCopyTexSubImage2D(0x0DE1, 0, 0, 0, 0, 0, 512, 512);
         check_error("glCopyTexSubImage2D");
-        vr::ovr_CommitTextureSwapChain(**VRSession, **VRTextureSwapChain);
+        vr::ovr_CommitTextureSwapChain(**VRSession, *VRTextureSwapChains[eye]);
         let layer = layer();
         let layers = [&layer as *const _ as *const vr::ovrLayerHeader];
-        vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), (&layers).as_ptr(), 1);
+        //if eye == 1 {
+            vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), (&layers).as_ptr(), 1);
+        //}
     }
-    
+    counter.store(current.wrapping_add(1), Ordering::SeqCst);
     result
 }
 
