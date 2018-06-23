@@ -76,6 +76,7 @@ lazy_static! {
     static ref rw_camera_end_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_end_update\0") }.unwrap();
     static ref rw_frame_translate: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32, u32) -> *mut c_void> = unsafe { RW.get(b"rw_frame_translate\0") }.unwrap();
     static ref rw_camera_set_view_window: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_set_view_window\0") }.unwrap();
+    static ref rw_camera_resize: lib::Symbol<'static, extern "C" fn(*mut c_void, i32, i32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_resize\0") }.unwrap();
 }
 
 lazy_static! {
@@ -133,6 +134,7 @@ pub extern "stdcall" fn NativeInjectionEntryPoint(_remote_info: *mut c_void) {
         lh_install_hook(**rw_camera_begin_update as *mut _, rw_camera_begin_update_hook as *mut _);
         lh_install_hook(**rw_camera_end_update as *mut _, rw_camera_end_update_hook as *mut _);
         lh_install_hook(**rw_camera_set_view_window as *mut _, rw_camera_set_view_window_hook as *mut _);
+        lh_install_hook(**rw_camera_resize as *mut _, rw_camera_resize_hook as *mut _);
         let error = error_string();
         File::create("installed_hook.txt").unwrap();
         let mut errors = File::create("hook_errors.txt").unwrap();
@@ -283,4 +285,10 @@ pub extern "C" fn rw_camera_set_view_window_hook(camera: *mut c_void, view_windo
     unsafe {
         rw_camera_set_view_window(camera, view_window)
     }
+}
+
+pub extern "C" fn rw_camera_resize_hook(camera: *mut c_void, width: i32, height: i32) -> *mut c_void {
+    *VRTextureSwapChains.lock().unwrap() = Some([texture_swap_chain(width, height), texture_swap_chain(width, height)]);
+    *ViewportSize.lock().unwrap() = Some((width as u32, height as u32));
+    camera
 }
