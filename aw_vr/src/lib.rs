@@ -3,6 +3,7 @@
 extern crate easyhook;
 extern crate libloading as lib;
 extern crate ovr_sys as vr;
+extern crate nalgebra;
 
 #[macro_use]
 extern crate lazy_static;
@@ -75,6 +76,7 @@ lazy_static! {
     static ref rw_camera_begin_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_begin_update\0") }.unwrap();
     static ref rw_camera_end_update: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_camera_end_update\0") }.unwrap();
     static ref rw_frame_translate: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32, u32) -> *mut c_void> = unsafe { RW.get(b"rw_frame_translate\0") }.unwrap();
+    static ref rw_frame_rotate: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32, f32, u32) -> *mut c_void> = unsafe { RW.get(b"rw_frame_rotate\0") }.unwrap();
     static ref rw_camera_set_view_window: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_set_view_window\0") }.unwrap();
     static ref rw_camera_resize: lib::Symbol<'static, extern "C" fn(*mut c_void, i32, i32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_resize\0") }.unwrap();
 }
@@ -151,6 +153,7 @@ pub extern "stdcall" fn NativeInjectionEntryPoint(_remote_info: *mut c_void) {
         File::create("about_to_install_hook.txt").unwrap();
 
         lazy_static::initialize(&VRSession);
+        vr::ovr_SetTrackingOriginType(**VRSession, vr::ovrTrackingOrigin_FloorLevel);
         
         //lh_install_hook(**glViewport as *mut _, glViewportHook as *mut _);
         lh_install_hook(**rw_camera_begin_update as *mut _, rw_camera_begin_update_hook as *mut _);
@@ -205,6 +208,13 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
     let frame = camera_get_frame(camera);
     let eye_pose = VRPoses.lock().unwrap()[eye];
     rw_frame_translate(frame, (&mut [eye_pose.Position.x, eye_pose.Position.y, eye_pose.Position.z]).as_mut_ptr(), 1);
+    let quat = nalgebra::geometry::Quaternion::new(eye_pose.Orientation.w, eye_pose.Orientation.x, eye_pose.Orientation.y, eye_pose.Orientation.z);
+    let (_norm, angle, maybe_axis) = quat.polar_decomposition();
+    let axis = maybe_axis.map(|axis| {
+        let axis = axis.as_ref();
+        (axis[0], axis[1], axis[2])
+    }).unwrap_or((1.0, 0.0, 0.0));
+    rw_frame_rotate(frame, (&mut [-axis.0, axis.1, -axis.2]).as_mut_ptr(), 2.0 * angle.to_degrees(), 1);
     let result = rw_camera_begin_update(camera);
     result
 }
