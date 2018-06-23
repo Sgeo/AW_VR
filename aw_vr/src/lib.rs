@@ -3,7 +3,6 @@
 extern crate easyhook;
 extern crate libloading as lib;
 extern crate ovr_sys as vr;
-extern crate nalgebra;
 
 #[macro_use]
 extern crate lazy_static;
@@ -208,13 +207,9 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
     let frame = camera_get_frame(camera);
     let eye_pose = VRPoses.lock().unwrap()[eye];
     rw_frame_translate(frame, (&mut [eye_pose.Position.x, eye_pose.Position.y, eye_pose.Position.z]).as_mut_ptr(), 1);
-    let quat = nalgebra::geometry::Quaternion::new(eye_pose.Orientation.w, eye_pose.Orientation.x, eye_pose.Orientation.y, eye_pose.Orientation.z);
-    let (_norm, angle, maybe_axis) = quat.polar_decomposition();
-    let axis = maybe_axis.map(|axis| {
-        let axis = axis.as_ref();
-        (axis[0], axis[1], axis[2])
-    }).unwrap_or((1.0, 0.0, 0.0));
-    rw_frame_rotate(frame, (&mut [-axis.0, axis.1, -axis.2]).as_mut_ptr(), 2.0 * angle.to_degrees(), 1);
+    let (axis, angle) = axis_angle(&eye_pose);
+    rw_frame_rotate(frame, (&mut [-axis.0, axis.1, -axis.2]).as_mut_ptr(), angle.to_degrees(), 1);
+    //rw_frame_rotate(frame, (&mut [0.0, 1.0, 0.0]).as_mut_ptr(), 360.0 + 90.0, 1);
     let result = rw_camera_begin_update(camera);
     result
 }
@@ -223,6 +218,25 @@ fn scale_posef(pose: &mut vr::ovrPosef) {
     pose.Position.x /= -10.0;
     pose.Position.y /= 10.0;
     pose.Position.z /= -10.0;
+}
+
+fn axis_angle(pose: &vr::ovrPosef) -> ((f32, f32, f32), f32) {
+    let (w, x, y, z) = (pose.Orientation.w, pose.Orientation.x, pose.Orientation.y, pose.Orientation.z);
+    let (mut x, mut y, mut z) = {
+        let len = (x*x + y*y + z*z).sqrt();
+        if len == 0.0 {
+            return ((1.0, 0.0, 0.0), 0.0);
+        }
+        (x/len, y/len, z/len)
+    };
+    let mut angle = 2.0 * w.acos();
+    if angle > std::f32::consts::PI * 2.0 {
+        angle = std::f32::consts::PI * 2.0 - angle;
+        x *= -1.0;
+        y *= -1.0;
+        z *= -1.0;
+    }
+    ((x, y, z), angle)
 }
 
 fn layer(tsc: &[TextureSwapChain], viewport_size: (u32, u32), poses: &[vr::ovrPosef]) -> vr::ovrLayerEyeFov {
