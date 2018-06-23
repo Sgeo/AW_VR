@@ -196,15 +196,23 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
             let right_eye_hmd_offset = vr::ovr_GetRenderDesc(**VRSession, vr::ovrEye_Right, fov).HmdToEyeOffset;
             let mut poses = [zero_posef(), zero_posef()];
             vr::ovr_GetEyePoses(**VRSession, 0, 1, &[left_eye_hmd_offset, right_eye_hmd_offset], (&mut poses).as_mut_ptr() as *const _, std::ptr::null_mut());
+            scale_posef(&mut poses[0]);
+            scale_posef(&mut poses[1]);
             *VRPoses.lock().unwrap() = poses;
         }
     }
-    if current&1 != 0 {
-        let frame = camera_get_frame(camera);
-        rw_frame_translate(frame, (&mut [-0.006, 0.0, 0.0]).as_mut_ptr(), 1);
-    }
+    let eye = current&1;
+    let frame = camera_get_frame(camera);
+    let eye_pose = VRPoses.lock().unwrap()[eye];
+    rw_frame_translate(frame, (&mut [eye_pose.Position.x, eye_pose.Position.y, eye_pose.Position.z]).as_mut_ptr(), 1);
     let result = rw_camera_begin_update(camera);
     result
+}
+
+fn scale_posef(pose: &mut vr::ovrPosef) {
+    pose.Position.x /= -10.0;
+    pose.Position.y /= 10.0;
+    pose.Position.z /= -10.0;
 }
 
 fn layer(tsc: &[TextureSwapChain], viewport_size: (u32, u32), poses: &[vr::ovrPosef]) -> vr::ovrLayerEyeFov {
