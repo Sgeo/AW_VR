@@ -206,6 +206,7 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
     let eye = current&1;
     let frame = camera_get_frame(camera);
     let eye_pose = VRPoses.lock().unwrap()[eye];
+    rw_frame_translate(frame, (&mut [0.0, -0.17 * 0.9, 0.0]).as_mut_ptr(), 1);
     rw_frame_translate(frame, (&mut [eye_pose.Position.x, eye_pose.Position.y, eye_pose.Position.z]).as_mut_ptr(), 1);
     let (axis, angle) = axis_angle(&eye_pose);
     rw_frame_rotate(frame, (&mut [-axis.0, axis.1, -axis.2]).as_mut_ptr(), angle.to_degrees(), 1);
