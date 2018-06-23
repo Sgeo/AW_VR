@@ -36,6 +36,7 @@ impl std::ops::DerefMut for Session {
 #[derive(Debug)]
 struct TextureSwapChain(vr::ovrTextureSwapChain);
 
+unsafe impl Send for TextureSwapChain {}
 unsafe impl Sync for TextureSwapChain {}
 
 impl std::ops::Deref for TextureSwapChain {
@@ -48,6 +49,14 @@ impl std::ops::Deref for TextureSwapChain {
 impl std::ops::DerefMut for TextureSwapChain {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl Drop for TextureSwapChain {
+    fn drop(&mut self) {
+        unsafe {
+            vr::ovr_DestroyTextureSwapChain(**VRSession, self.0);
+        }
     }
 }
 
@@ -87,17 +96,17 @@ lazy_static! {
             Session(session)
         }
     };
-    static ref VRTextureSwapChains: [TextureSwapChain; 2] = [texture_swap_chain(), texture_swap_chain()];
+    static ref VRTextureSwapChains: Mutex<Option<[TextureSwapChain; 2]>> = Mutex::new(None);
     static ref ViewportSize: Mutex<Option<(u32, u32)>> = Mutex::new(None);
 }
 
-fn texture_swap_chain() -> TextureSwapChain {
+fn texture_swap_chain(width: i32, height: i32) -> TextureSwapChain {
     let desc = vr::ovrTextureSwapChainDesc {
         Type: vr::ovrTexture_2D,
-        Format: vr::OVR_FORMAT_R8G8B8A8_UNORM_SRGB, // WILD GUESSING!
+        Format: vr::OVR_FORMAT_R8G8B8A8_UNORM_SRGB,
         ArraySize: 1,
-        Width: 512+128,
-        Height: 512+128,
+        Width: width,
+        Height: height,
         MipLevels: 1,
         SampleCount: 1,
         StaticImage: 0,
@@ -149,7 +158,6 @@ fn camera_get_frame(camera: *mut c_void) -> *mut c_void {
 }
 
 pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_void {
-    lazy_static::initialize(&VRTextureSwapChains);
     let current = counter.load(Ordering::SeqCst);
     if current&1 != 0 {
         let frame = camera_get_frame(camera);
@@ -159,13 +167,13 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
     result
 }
 
-fn layer(viewport_size: (u32, u32)) -> vr::ovrLayerEyeFov {
+fn layer(tsc: &[TextureSwapChain], viewport_size: (u32, u32)) -> vr::ovrLayerEyeFov {
     let (width, height) = viewport_size;
     unsafe { 
         let viewport = vr::ovrRecti {
             Pos: vr::ovrVector2i {
                 x: 0,
-                y: 128,
+                y: 0,
                 .. mem::uninitialized()
             },
             Size: vr::ovrSizei {
@@ -204,7 +212,7 @@ fn layer(viewport_size: (u32, u32)) -> vr::ovrLayerEyeFov {
                 Flags: vr::ovrLayerFlag_TextureOriginAtBottomLeft as u32,
                 .. mem::uninitialized()
             },
-            ColorTexture: [*VRTextureSwapChains[0], *VRTextureSwapChains[1]],
+            ColorTexture: [*tsc[0], *tsc[1]],
             Viewport: [viewport, viewport],
             Fov: [fov, fov],
             RenderPose: [pose, pose],
@@ -231,15 +239,22 @@ pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void 
     let eye: usize = current&1;
     unsafe {
         let mut texid = 0;
-        vr::opengl::ovr_GetTextureSwapChainBufferGL(**VRSession, *VRTextureSwapChains[eye], -1, &mut texid);
+        let mut tsc_lock = VRTextureSwapChains.lock().unwrap();
+        if tsc_lock.is_none() {
+            let mut viewport = [0i32, 0, 0, 0];
+            glGetIntegerv(0x0BA2, viewport.as_mut_ptr());
+            let (width, height) = (viewport[2] as u32, viewport[3] as u32);
+            //let (width, height) = (512, 512);
+            *tsc_lock = Some([texture_swap_chain(width as i32, height as i32), texture_swap_chain(width as i32, height as i32)]);
+            *ViewportSize.lock().unwrap() = Some((width, height));
+        }
+        let tsc = tsc_lock.as_ref().unwrap();
+        vr::opengl::ovr_GetTextureSwapChainBufferGL(**VRSession, *tsc[eye], -1, &mut texid);
         if texid == 0 {
             panic!("0 texid");
         }
-        //let viewport = ViewportSize.lock().unwrap();
-        let mut viewport = [0i32, 0, 0, 0];
-        glGetIntegerv(0x0BA2, viewport.as_mut_ptr());
-        let (width, height) = (viewport[2] as u32, viewport[3] as u32);
-        let (width, height) = (512 as u32, 512 as u32);
+        let (width, height) = ViewportSize.lock().unwrap().unwrap();
+        
         glEnable(0x0DE1);
         check_error("Enabling GL_TEXTURE_2D");
         glReadBuffer(0x0404);
@@ -248,8 +263,8 @@ pub extern "C" fn rw_camera_end_update_hook(camera: *mut c_void) -> *mut c_void 
         check_error("glBindTexture");
         glCopyTexSubImage2D(0x0DE1, 0, 0, 0, 0, 0, width, height);
         check_error("glCopyTexSubImage2D");
-        vr::ovr_CommitTextureSwapChain(**VRSession, *VRTextureSwapChains[eye]);
-        let layer = layer((width, height));
+        vr::ovr_CommitTextureSwapChain(**VRSession, *tsc[eye]);
+        let layer = layer(&*tsc, (width, height));
         let layers = [&layer as *const _ as *const vr::ovrLayerHeader];
         vr::ovr_SubmitFrame(**VRSession, 0, std::ptr::null(), (&layers).as_ptr(), 1);
     }
