@@ -3,6 +3,7 @@
 extern crate easyhook;
 extern crate libloading as lib;
 extern crate ovr_sys as vr;
+extern crate enigo;
 
 #[macro_use]
 extern crate lazy_static;
@@ -14,6 +15,7 @@ use easyhook::{lh_install_hook};
 use easyhook::error_string;
 use std::sync::Mutex;
 use std::mem;
+use enigo::{Enigo, Key, KeyboardControllable};
 
 #[derive(Debug)]
 struct Session(vr::ovrSession);
@@ -102,6 +104,7 @@ lazy_static! {
     static ref VRTextureSwapChains: Mutex<Option<[TextureSwapChain; 2]>> = Mutex::new(None);
     static ref ViewportSize: Mutex<Option<(u32, u32)>> = Mutex::new(None);
     static ref VRPoses: Mutex<[vr::ovrPosef; 2]> = Mutex::new([zero_posef(), zero_posef()]);
+    static ref VREnigo: Mutex<Enigo> = Mutex::new(Enigo::new());
 }
 
 fn zero_posef() -> vr::ovrPosef {
@@ -186,6 +189,44 @@ fn camera_get_frame(camera: *mut c_void) -> *mut c_void {
 
 pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_void {
     let current = counter.load(Ordering::SeqCst);
+    unsafe {
+        let mut status = mem::zeroed();
+        vr::ovr_GetSessionStatus(**VRSession, &mut status);
+        if status.ShouldRecenter != 0 {
+            vr::ovr_RecenterTrackingOrigin(**VRSession);
+        }
+        let mut input_state = mem::zeroed();
+        vr::ovr_GetInputState(**VRSession, vr::ovrControllerType_Touch, &mut input_state);
+        if input_state.Buttons & (vr::ovrButton_Enter as u32) != 0 {
+            vr::ovr_RecenterTrackingOrigin(**VRSession);
+        }
+        if input_state.Thumbstick[0].y != 0.0 || input_state.Thumbstick[1].x != 0.0 {
+            let mut enigo = VREnigo.lock().unwrap();
+            let x = input_state.Thumbstick[1].x;
+            let y = input_state.Thumbstick[0].y;
+            let ctrl = y.abs() >= 0.99;
+            if ctrl {
+                enigo.key_down(Key::Control);
+            }
+            if y > 0.5 {
+                enigo.key_click(Key::UpArrow);
+            } else if y < -0.5 {
+                enigo.key_click(Key::DownArrow);
+            }
+            if ctrl {
+                enigo.key_up(Key::Control);
+            }
+            if x > 0.5 {
+                enigo.key_down(Key::RightArrow);
+                std::thread::sleep(std::time::Duration::new(0, 100_000_000));
+                enigo.key_up(Key::RightArrow);
+            } else if x < -0.5 {
+                enigo.key_down(Key::LeftArrow);
+                std::thread::sleep(std::time::Duration::new(0, 100_000_000));
+                enigo.key_up(Key::LeftArrow);
+            }
+        }
+    }
     if current&1 == 0 {
         unsafe {
             let fov = vr::ovrFovPort {
