@@ -104,7 +104,64 @@ lazy_static! {
     static ref VRTextureSwapChains: Mutex<Option<[TextureSwapChain; 2]>> = Mutex::new(None);
     static ref ViewportSize: Mutex<Option<(u32, u32)>> = Mutex::new(None);
     static ref VRPoses: Mutex<[vr::ovrPosef; 2]> = Mutex::new([zero_posef(), zero_posef()]);
-    static ref VREnigo: Mutex<Enigo> = Mutex::new(Enigo::new());
+    static ref VRKeyboard: Mutex<Keyboard> = Mutex::new(Keyboard::new());
+}
+
+#[derive(Debug)]
+struct Keyboard {
+    enigo: Enigo,
+    ctrl: bool,
+    left: bool,
+    right: bool,
+    up: bool,
+    down: bool,
+    plus: bool,
+    minus: bool
+}
+
+impl Keyboard {
+    fn new() -> Self {
+        Keyboard {
+            enigo: Enigo::new(),
+            ctrl: false,
+            left: false,
+            right: false,
+            up: false,
+            down: false,
+            plus: false,
+            minus: false
+        }
+    }
+    
+    fn status(&mut self, key: Key) -> &mut bool {
+        match key {
+            Key::Control => &mut self.ctrl,
+            Key::LeftArrow => &mut self.left,
+            Key::RightArrow => &mut self.right,
+            Key::UpArrow => &mut self.up,
+            Key::DownArrow => &mut self.down,
+            Key::Layout('+') => &mut self.plus,
+            Key::Layout('-') => &mut self.minus,
+            _ => panic!("Unknown key!")
+        }
+    }
+    
+    fn hold(&mut self, key: Key) {
+        let status = *self.status(key);
+        if !status {
+            self.enigo.key_down(key);
+            *self.status(key) = true;
+        }
+    }
+    
+    fn release(&mut self, key: Key) {
+        let status = *self.status(key);
+        if status {
+            self.enigo.key_up(key);
+            *self.status(key) = false;
+        }
+    }
+    
 }
 
 fn zero_posef() -> vr::ovrPosef {
@@ -201,29 +258,34 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
             vr::ovr_RecenterTrackingOrigin(**VRSession);
         }
         if input_state.Thumbstick[0].y != 0.0 || input_state.Thumbstick[1].x != 0.0 {
-            let mut enigo = VREnigo.lock().unwrap();
+            let mut keyboard = VRKeyboard.lock().unwrap();
             let x = input_state.Thumbstick[1].x;
             let y = input_state.Thumbstick[0].y;
             let ctrl = y.abs() >= 0.99;
             if ctrl {
-                enigo.key_down(Key::Control);
+                keyboard.hold(Key::Control);
+            } else {
+                keyboard.release(Key::Control);
             }
             if y > 0.5 {
-                enigo.key_click(Key::UpArrow);
-            } else if y < -0.5 {
-                enigo.key_click(Key::DownArrow);
+                keyboard.hold(Key::UpArrow);
+            } else {
+                keyboard.release(Key::UpArrow);
             }
-            if ctrl {
-                enigo.key_up(Key::Control);
+            if y < -0.5 {
+                keyboard.hold(Key::DownArrow);
+            } else {
+                keyboard.release(Key::DownArrow);
             }
             if x > 0.5 {
-                enigo.key_down(Key::RightArrow);
-                std::thread::sleep(std::time::Duration::new(0, 100_000_000));
-                enigo.key_up(Key::RightArrow);
-            } else if x < -0.5 {
-                enigo.key_down(Key::LeftArrow);
-                std::thread::sleep(std::time::Duration::new(0, 100_000_000));
-                enigo.key_up(Key::LeftArrow);
+                keyboard.hold(Key::RightArrow);
+            } else {
+                keyboard.release(Key::RightArrow);
+            }
+            if x < -0.5 {
+                keyboard.hold(Key::LeftArrow);
+            } else {
+                keyboard.release(Key::LeftArrow);
             }
         }
     }
