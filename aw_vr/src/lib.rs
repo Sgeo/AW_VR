@@ -391,5 +391,5 @@ pub extern "C" fn rw_camera_set_view_window_hook(camera: *mut c_void, view_windo
 pub extern "C" fn rw_camera_resize_hook(camera: *mut c_void, width: i32, height: i32) -> *mut c_void {
     *VRTextureSwapChains.lock().unwrap() = Some([texture_swap_chain(width, height), texture_swap_chain(width, height)]);
     *ViewportSize.lock().unwrap() = Some((width as u32, height as u32));
-    camera
+    rw_camera_resize(camera, width, height)
 }
