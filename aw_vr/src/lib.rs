@@ -283,7 +283,7 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
             let mut keyboard = VRKeyboard.lock().unwrap();
             let x = input_state.Thumbstick[1].x;
             let y = input_state.Thumbstick[0].y;
-            let ctrl = y.abs() >= 0.99;
+            let ctrl = y.abs() >= 0.75;
             if ctrl {
                 keyboard.hold(Key::Control);
             } else {
