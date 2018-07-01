@@ -62,6 +62,24 @@ impl Drop for TextureSwapChain {
     }
 }
 
+#[derive(Debug)]
+struct Matrix(*mut c_void);
+
+unsafe impl Send for Matrix {}
+
+impl std::ops::Deref for Matrix {
+    type Target = *mut c_void;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Matrix {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 lazy_static! {
     static ref GL: lib::Library = lib::Library::new("OPENGL32").unwrap();
     static ref RW: lib::Library = lib::Library::new("rw_opengl").unwrap();
@@ -81,6 +99,9 @@ lazy_static! {
     static ref rw_frame_rotate: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32, f32, u32) -> *mut c_void> = unsafe { RW.get(b"rw_frame_rotate\0") }.unwrap();
     static ref rw_camera_set_view_window: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut f32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_set_view_window\0") }.unwrap();
     static ref rw_camera_resize: lib::Symbol<'static, extern "C" fn(*mut c_void, i32, i32) -> *mut c_void> = unsafe { RW.get(b"rw_camera_resize\0") }.unwrap();
+    static ref rw_frame_get_matrix: lib::Symbol<'static, extern "C" fn(*mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_frame_get_matrix\0") }.unwrap();
+    static ref rw_matrix_create: lib::Symbol<'static, extern "C" fn() -> *mut c_void> = unsafe { RW.get(b"rw_matrix_create\0") }.unwrap();
+    static ref rw_matrix_copy: lib::Symbol<'static, extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void> = unsafe { RW.get(b"rw_matrix_copy\0") }.unwrap();
 }
 
 lazy_static! {
@@ -105,6 +126,7 @@ lazy_static! {
     static ref ViewportSize: Mutex<Option<(u32, u32)>> = Mutex::new(None);
     static ref VRPoses: Mutex<[vr::ovrPosef; 2]> = Mutex::new([zero_posef(), zero_posef()]);
     static ref VRKeyboard: Mutex<Keyboard> = Mutex::new(Keyboard::new());
+    static ref VRLeftMatrix: Mutex<Matrix> = Mutex::new(unsafe { Matrix(rw_matrix_create()) });
 }
 
 #[derive(Debug)]
@@ -309,6 +331,13 @@ pub extern "C" fn rw_camera_begin_update_hook(camera: *mut c_void) -> *mut c_voi
     }
     let eye = current&1;
     let frame = camera_get_frame(camera);
+    let frame_matrix = rw_frame_get_matrix(frame);
+    let left_matrix = VRLeftMatrix.lock().unwrap().0;
+    if eye == 0 {
+        rw_matrix_copy(left_matrix, frame_matrix);
+    } else {
+        rw_matrix_copy(frame_matrix, left_matrix);
+    }
     let eye_pose = VRPoses.lock().unwrap()[eye];
     rw_frame_translate(frame, (&mut [0.0, -0.17 * 0.9, 0.0]).as_mut_ptr(), 1);
     rw_frame_translate(frame, (&mut [eye_pose.Position.x, eye_pose.Position.y, eye_pose.Position.z]).as_mut_ptr(), 1);
